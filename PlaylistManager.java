@@ -1,14 +1,16 @@
+import java.util.ArrayList;
 import java.util.Iterator;
+import java.util.List;
 import java.util.NoSuchElementException;
 
-// ─────────────────────────────────────────────
-//  Song  – represents a single track
-// ─────────────────────────────────────────────
+// ══════════════════════════════════════════════════════════════════════════════
+//  Song  –  immutable data model for a single track
+// ══════════════════════════════════════════════════════════════════════════════
 class Song {
     private final String title;
     private final String artist;
     private final String album;
-    private final int    durationSeconds; // stored in seconds
+    private final int    durationSeconds;
 
     public Song(String title, String artist, String album, int durationSeconds) {
         if (title  == null || title.isBlank())  throw new IllegalArgumentException("Title cannot be empty.");
@@ -21,17 +23,13 @@ class Song {
         this.durationSeconds = durationSeconds;
     }
 
-    // ── Getters ──────────────────────────────
     public String getTitle()           { return title;           }
     public String getArtist()          { return artist;          }
     public String getAlbum()           { return album;           }
     public int    getDurationSeconds() { return durationSeconds; }
 
-    /** Returns duration as "mm:ss" */
     public String getFormattedDuration() {
-        int minutes = durationSeconds / 60;
-        int seconds = durationSeconds % 60;
-        return String.format("%d:%02d", minutes, seconds);
+        return String.format("%d:%02d", durationSeconds / 60, durationSeconds % 60);
     }
 
     @Override
@@ -55,266 +53,494 @@ class Song {
 }
 
 
-// ─────────────────────────────────────────────
-//  Node  – internal building block of the list
-// ─────────────────────────────────────────────
+// ══════════════════════════════════════════════════════════════════════════════
+//  Node  –  doubly-linked node used by PlaylistLinkedList
+// ══════════════════════════════════════════════════════════════════════════════
 class Node {
     Song song;
     Node next;
-    Node prev;          // doubly-linked for O(1) removal given the node
+    Node prev;
 
-    Node(Song song) {
-        this.song = song;
-    }
+    Node(Song song) { this.song = song; }
 }
 
 
-// ─────────────────────────────────────────────
-//  PlaylistLinkedList  – custom doubly linked list
-// ─────────────────────────────────────────────
+// ══════════════════════════════════════════════════════════════════════════════
+//  PlaylistLinkedList  –  custom doubly-linked list (ordered playback store)
+// ══════════════════════════════════════════════════════════════════════════════
 class PlaylistLinkedList implements Iterable<Song> {
 
     private Node head;
     private Node tail;
     private int  size;
 
-    // ── Add at end ────────────────────────────
+    // ── Insert ────────────────────────────────────────────────────────────────
     public void addLast(Song song) {
-        if (song == null) throw new IllegalArgumentException("Cannot add a null song.");
-        Node newNode = new Node(song);
-        if (isEmpty()) {
-            head = tail = newNode;
-        } else {
-            tail.next    = newNode;
-            newNode.prev = tail;
-            tail         = newNode;
-        }
+        requireNonNull(song);
+        Node n = new Node(song);
+        if (isEmpty()) { head = tail = n; }
+        else           { tail.next = n; n.prev = tail; tail = n; }
         size++;
     }
 
-    // ── Add at beginning ──────────────────────
     public void addFirst(Song song) {
-        if (song == null) throw new IllegalArgumentException("Cannot add a null song.");
-        Node newNode = new Node(song);
-        if (isEmpty()) {
-            head = tail = newNode;
-        } else {
-            newNode.next = head;
-            head.prev    = newNode;
-            head         = newNode;
-        }
+        requireNonNull(song);
+        Node n = new Node(song);
+        if (isEmpty()) { head = tail = n; }
+        else           { n.next = head; head.prev = n; head = n; }
         size++;
     }
 
-    // ── Insert after a given index (0-based) ──
     public void addAt(int index, Song song) {
-        checkIndexForInsert(index);
+        checkInsertIndex(index);
         if (index == 0)    { addFirst(song); return; }
         if (index == size) { addLast(song);  return; }
-
-        Node current  = getNodeAt(index - 1);
-        Node newNode  = new Node(song);
-        newNode.next  = current.next;
-        newNode.prev  = current;
-        if (current.next != null) current.next.prev = newNode;
-        current.next  = newNode;
+        Node cur = nodeAt(index - 1);
+        Node n   = new Node(song);
+        n.next   = cur.next;
+        n.prev   = cur;
+        if (cur.next != null) cur.next.prev = n;
+        cur.next = n;
         size++;
     }
 
-    // ── Remove by title (case-insensitive) ───
+    // ── Remove ────────────────────────────────────────────────────────────────
     public boolean removeByTitle(String title) {
-        Node current = head;
-        while (current != null) {
-            if (current.song.getTitle().equalsIgnoreCase(title)) {
-                unlink(current);
-                return true;
-            }
-            current = current.next;
+        for (Node cur = head; cur != null; cur = cur.next) {
+            if (cur.song.getTitle().equalsIgnoreCase(title)) { unlink(cur); return true; }
         }
         return false;
     }
 
-    // ── Remove by index (0-based) ────────────
     public Song removeAt(int index) {
-        checkIndexForAccess(index);
-        Node target = getNodeAt(index);
+        checkAccessIndex(index);
+        Node target = nodeAt(index);
         unlink(target);
         return target.song;
     }
 
-    // ── Remove first ─────────────────────────
     public Song removeFirst() {
         if (isEmpty()) throw new NoSuchElementException("Playlist is empty.");
         return removeAt(0);
     }
 
-    // ── Remove last ──────────────────────────
     public Song removeLast() {
         if (isEmpty()) throw new NoSuchElementException("Playlist is empty.");
         return removeAt(size - 1);
     }
 
-    // ── Search by title ───────────────────────
-    public Song searchByTitle(String title) {
-        Node current = head;
-        while (current != null) {
-            if (current.song.getTitle().equalsIgnoreCase(title)) return current.song;
-            current = current.next;
-        }
-        return null;
-    }
-
-    // ── Search by artist (returns first match) ─
+    // ── Search (linear – used for artist lookup) ──────────────────────────────
     public Song searchByArtist(String artist) {
-        Node current = head;
-        while (current != null) {
-            if (current.song.getArtist().equalsIgnoreCase(artist)) return current.song;
-            current = current.next;
-        }
+        for (Node cur = head; cur != null; cur = cur.next)
+            if (cur.song.getArtist().equalsIgnoreCase(artist)) return cur.song;
         return null;
     }
 
-    // ── Get song at index (0-based) ───────────
-    public Song get(int index) {
-        checkIndexForAccess(index);
-        return getNodeAt(index).song;
-    }
+    // ── Random access & utilities ─────────────────────────────────────────────
+    public Song    get(int index)   { checkAccessIndex(index); return nodeAt(index).song; }
+    public int     size()           { return size; }
+    public boolean isEmpty()        { return size == 0; }
+    public void    clear()          { head = tail = null; size = 0; }
 
-    // ── Contains ─────────────────────────────
     public boolean contains(Song song) {
-        Node current = head;
-        while (current != null) {
-            if (current.song.equals(song)) return true;
-            current = current.next;
-        }
+        for (Song s : this) if (s.equals(song)) return true;
         return false;
     }
 
-    // ── Total duration ────────────────────────
     public int totalDurationSeconds() {
         int total = 0;
         for (Song s : this) total += s.getDurationSeconds();
         return total;
     }
 
-    /** Returns total duration as "Xh Ym Zs" */
     public String formattedTotalDuration() {
-        int total   = totalDurationSeconds();
-        int hours   = total / 3600;
-        int minutes = (total % 3600) / 60;
-        int seconds = total % 60;
-        if (hours > 0) return String.format("%dh %dm %ds", hours, minutes, seconds);
-        return String.format("%dm %ds", minutes, seconds);
+        int t = totalDurationSeconds();
+        int h = t / 3600, m = (t % 3600) / 60, s = t % 60;
+        return h > 0 ? String.format("%dh %dm %ds", h, m, s) : String.format("%dm %ds", m, s);
     }
 
-    // ── Size / Empty ──────────────────────────
-    public int     size()    { return size;    }
-    public boolean isEmpty() { return size == 0; }
-
-    // ── Clear ─────────────────────────────────
-    public void clear() { head = tail = null; size = 0; }
-
-    // ── Iterator (forward) ────────────────────
     @Override
     public Iterator<Song> iterator() {
         return new Iterator<>() {
-            Node current = head;
-            @Override public boolean hasNext() { return current != null; }
-            @Override public Song    next()    {
+            Node cur = head;
+            public boolean hasNext() { return cur != null; }
+            public Song    next()    {
                 if (!hasNext()) throw new NoSuchElementException();
-                Song s = current.song;
-                current = current.next;
-                return s;
+                Song s = cur.song; cur = cur.next; return s;
             }
         };
     }
 
-    // ── Private helpers ───────────────────────
-    private Node getNodeAt(int index) {
-        // Traverse from the closer end for efficiency
-        Node current;
+    // ── Private helpers ───────────────────────────────────────────────────────
+    private Node nodeAt(int index) {
+        Node cur;
         if (index < size / 2) {
-            current = head;
-            for (int i = 0; i < index; i++) current = current.next;
+            cur = head; for (int i = 0; i < index; i++) cur = cur.next;
         } else {
-            current = tail;
-            for (int i = size - 1; i > index; i--) current = current.prev;
+            cur = tail; for (int i = size - 1; i > index; i--) cur = cur.prev;
         }
-        return current;
+        return cur;
     }
 
-    private void unlink(Node node) {
-        if (node.prev != null) node.prev.next = node.next; else head = node.next;
-        if (node.next != null) node.next.prev = node.prev; else tail = node.prev;
-        node.prev = node.next = null;
+    private void unlink(Node n) {
+        if (n.prev != null) n.prev.next = n.next; else head = n.next;
+        if (n.next != null) n.next.prev = n.prev; else tail = n.prev;
+        n.prev = n.next = null;
         size--;
     }
 
-    private void checkIndexForAccess(int index) {
-        if (index < 0 || index >= size)
-            throw new IndexOutOfBoundsException("Index " + index + " out of bounds for size " + size);
+    private void requireNonNull(Song s) {
+        if (s == null) throw new IllegalArgumentException("Song cannot be null.");
     }
 
-    private void checkIndexForInsert(int index) {
-        if (index < 0 || index > size)
-            throw new IndexOutOfBoundsException("Insert index " + index + " out of bounds for size " + size);
+    private void checkAccessIndex(int i) {
+        if (i < 0 || i >= size)
+            throw new IndexOutOfBoundsException("Index " + i + " out of bounds for size " + size);
+    }
+
+    private void checkInsertIndex(int i) {
+        if (i < 0 || i > size)
+            throw new IndexOutOfBoundsException("Insert index " + i + " out of bounds for size " + size);
     }
 }
 
 
-// ─────────────────────────────────────────────
-//  Playlist  – high-level manager
-// ─────────────────────────────────────────────
+// ══════════════════════════════════════════════════════════════════════════════
+//  BSTNode  –  node in the Binary Search Tree, keyed on song title (lowercase)
+// ══════════════════════════════════════════════════════════════════════════════
+class BSTNode {
+    String  key;        // normalised (lowercase) title – the BST ordering key
+    Song    song;       // payload
+    BSTNode left;
+    BSTNode right;
+
+    BSTNode(Song song) {
+        this.key  = song.getTitle().toLowerCase();
+        this.song = song;
+    }
+}
+
+
+// ══════════════════════════════════════════════════════════════════════════════
+//  SongBST  –  Binary Search Tree keyed on song title
+//
+//  Why a BST here?
+//  ┌─────────────────────┬──────────────┬──────────────┐
+//  │ Operation           │ Linked list  │ BST (avg)    │
+//  ├─────────────────────┼──────────────┼──────────────┤
+//  │ searchByTitle       │   O(n)       │   O(log n)   │
+//  │ insert              │   O(1) tail  │   O(log n)   │
+//  │ delete              │   O(n)       │   O(log n)   │
+//  │ in-order (sorted)   │   O(n log n) │   O(n)       │
+//  └─────────────────────┴──────────────┴──────────────┘
+//
+//  The linked list keeps playback ORDER; the BST accelerates title LOOKUP.
+//  Both structures stay in sync through Playlist.addSong / removeSong.
+// ══════════════════════════════════════════════════════════════════════════════
+class SongBST {
+
+    private BSTNode root;
+    private int     size;
+
+    // ── Insert ────────────────────────────────────────────────────────────────
+    /**
+     * Inserts a song into the BST.
+     * Duplicate titles (same key) overwrite the existing node's song payload
+     * so the tree never holds stale data after an update.
+     */
+    public void insert(Song song) {
+        root = insertRec(root, song);
+    }
+
+    private BSTNode insertRec(BSTNode node, Song song) {
+        if (node == null) { size++; return new BSTNode(song); }
+        int cmp = song.getTitle().compareToIgnoreCase(node.song.getTitle());
+        if      (cmp < 0) node.left  = insertRec(node.left,  song);
+        else if (cmp > 0) node.right = insertRec(node.right, song);
+        else              node.song  = song;   // same title → update payload
+        return node;
+    }
+
+    // ── Search by exact title  O(log n) average ───────────────────────────────
+    /**
+     * Searches the BST for a song whose title matches exactly (case-insensitive).
+     * Average: O(log n)  |  Worst (degenerate tree): O(n)
+     */
+    public Song searchByTitle(String title) {
+        return searchRec(root, title.toLowerCase());
+    }
+
+    private Song searchRec(BSTNode node, String key) {
+        if (node == null) return null;
+        int cmp = key.compareTo(node.key);
+        if      (cmp < 0) return searchRec(node.left,  key);
+        else if (cmp > 0) return searchRec(node.right, key);
+        else              return node.song;            // exact match
+    }
+
+    // ── Prefix / autocomplete search  O(n) ───────────────────────────────────
+    /**
+     * Returns every song whose title STARTS WITH the given prefix.
+     * Useful for autocomplete. Traverses only the relevant sub-tree first,
+     * then collects all matches in that subtree – still O(n) worst-case but
+     * prunes irrelevant branches early.
+     */
+    public List<Song> searchByPrefix(String prefix) {
+        List<Song> results = new ArrayList<>();
+        prefixRec(root, prefix.toLowerCase(), results);
+        return results;
+    }
+
+    private void prefixRec(BSTNode node, String prefix, List<Song> results) {
+        if (node == null) return;
+        int cmp = node.key.compareTo(prefix);
+
+        // This node's key is >= prefix: left subtree may still have matches
+        if (cmp >= 0) prefixRec(node.left, prefix, results);
+
+        // Collect this node if its key starts with the prefix
+        if (node.key.startsWith(prefix)) {
+            results.add(node.song);
+            // Right subtree may have more prefix matches only if key == prefix so far
+            prefixRec(node.right, prefix, results);
+        } else if (cmp < 0) {
+            // This node's key < prefix, so only the right subtree can match
+            prefixRec(node.right, prefix, results);
+        }
+    }
+
+    // ── Delete ────────────────────────────────────────────────────────────────
+    /**
+     * Removes the song with the given title from the BST.
+     * Uses the in-order successor (smallest node in right subtree) strategy
+     * for nodes with two children, preserving BST invariants.
+     */
+    public boolean delete(String title) {
+        int before = size;
+        root = deleteRec(root, title.toLowerCase());
+        return size < before;
+    }
+
+    private BSTNode deleteRec(BSTNode node, String key) {
+        if (node == null) return null;           // not found
+        int cmp = key.compareTo(node.key);
+        if      (cmp < 0) { node.left  = deleteRec(node.left,  key); }
+        else if (cmp > 0) { node.right = deleteRec(node.right, key); }
+        else {
+            // ── Found the node to delete ──────────────────────────────────
+            size--;
+            if (node.left  == null) return node.right;  // 0 or 1 child
+            if (node.right == null) return node.left;   // 1 child
+
+            // 2 children: replace with in-order successor (min of right subtree)
+            BSTNode successor = findMin(node.right);
+            node.key  = successor.key;
+            node.song = successor.song;
+            node.right = deleteRec(node.right, successor.key);
+        }
+        return node;
+    }
+
+    private BSTNode findMin(BSTNode node) {
+        while (node.left != null) node = node.left;
+        return node;
+    }
+
+    // ── In-order traversal (alphabetical by title) ────────────────────────────
+    /**
+     * Returns all songs sorted alphabetically by title via in-order traversal.
+     * This is a free O(n) operation – no separate sort needed.
+     */
+    public List<Song> inOrderSorted() {
+        List<Song> sorted = new ArrayList<>();
+        inOrderRec(root, sorted);
+        return sorted;
+    }
+
+    private void inOrderRec(BSTNode node, List<Song> list) {
+        if (node == null) return;
+        inOrderRec(node.left,  list);
+        list.add(node.song);
+        inOrderRec(node.right, list);
+    }
+
+    // ── Tree shape visualiser (for debugging / demo) ──────────────────────────
+    /**
+     * Prints a sideways representation of the BST (right subtree on top).
+     * Each level is indented by 4 spaces; useful to verify tree balance.
+     *
+     *   Example output (right is "up"):
+     *       "Stairway to Heaven"
+     *   "Imagine"
+     *           "Hotel California"
+     *       "Bohemian Rhapsody"
+     */
+    public void printTree() {
+        if (root == null) { System.out.println("  (empty BST)"); return; }
+        printTreeRec(root, 0);
+    }
+
+    private void printTreeRec(BSTNode node, int depth) {
+        if (node == null) return;
+        printTreeRec(node.right, depth + 1);
+        System.out.println("    ".repeat(depth) + "\"" + node.song.getTitle() + "\"");
+        printTreeRec(node.left,  depth + 1);
+    }
+
+    // ── Utility ───────────────────────────────────────────────────────────────
+    public int     size()    { return size;    }
+    public boolean isEmpty() { return size == 0; }
+    public void    clear()   { root = null; size = 0; }
+}
+
+
+// ══════════════════════════════════════════════════════════════════════════════
+//  Playlist  –  high-level facade that keeps the linked list and BST in sync
+//
+//  Linked list  →  preserves insertion / playback ORDER
+//  BST          →  accelerates title SEARCH & provides sorted traversal
+// ══════════════════════════════════════════════════════════════════════════════
 class Playlist {
-    private final String            name;
-    private final PlaylistLinkedList songs;
+
+    private final String             name;
+    private final PlaylistLinkedList songs;   // ordered store
+    private final SongBST            titleBST; // O(log n) title lookup
 
     public Playlist(String name) {
         if (name == null || name.isBlank()) throw new IllegalArgumentException("Playlist name cannot be empty.");
-        this.name  = name.trim();
-        this.songs = new PlaylistLinkedList();
+        this.name     = name.trim();
+        this.songs    = new PlaylistLinkedList();
+        this.titleBST = new SongBST();
     }
 
-    // ── Mutation ──────────────────────────────
-    public void addSong(Song song)             { songs.addLast(song);        }
-    public void addSongFirst(Song song)        { songs.addFirst(song);       }
-    public void addSongAt(int i, Song song)    { songs.addAt(i, song);       }
+    // ── Mutation (keeps both structures in sync) ──────────────────────────────
+    public void addSong(Song song) {
+        songs.addLast(song);
+        titleBST.insert(song);
+    }
 
-    public boolean removeSongByTitle(String t) { return songs.removeByTitle(t); }
-    public Song    removeSongAt(int index)     { return songs.removeAt(index);  }
-    public Song    removeFirstSong()           { return songs.removeFirst();    }
-    public Song    removeLastSong()            { return songs.removeLast();     }
-    public void    clear()                     { songs.clear();                }
+    public void addSongFirst(Song song) {
+        songs.addFirst(song);
+        titleBST.insert(song);
+    }
 
-    // ── Query ─────────────────────────────────
-    public Song    searchByTitle(String t)   { return songs.searchByTitle(t);  }
-    public Song    searchByArtist(String a)  { return songs.searchByArtist(a); }
-    public Song    getSongAt(int index)      { return songs.get(index);        }
-    public boolean contains(Song song)       { return songs.contains(song);    }
-    public int     size()                    { return songs.size();            }
-    public boolean isEmpty()                 { return songs.isEmpty();         }
+    public void addSongAt(int index, Song song) {
+        songs.addAt(index, song);
+        titleBST.insert(song);
+    }
 
-    // ── Display ───────────────────────────────
+    public boolean removeSongByTitle(String title) {
+        boolean removedFromList = songs.removeByTitle(title);
+        if (removedFromList) titleBST.delete(title);   // keep BST in sync
+        return removedFromList;
+    }
+
+    public Song removeSongAt(int index) {
+        Song removed = songs.removeAt(index);
+        titleBST.delete(removed.getTitle());
+        return removed;
+    }
+
+    public Song removeFirstSong() {
+        Song removed = songs.removeFirst();
+        titleBST.delete(removed.getTitle());
+        return removed;
+    }
+
+    public Song removeLastSong() {
+        Song removed = songs.removeLast();
+        titleBST.delete(removed.getTitle());
+        return removed;
+    }
+
+    public void clear() {
+        songs.clear();
+        titleBST.clear();
+    }
+
+    // ── Search ────────────────────────────────────────────────────────────────
+
+    /**
+     * Searches by exact title using the BST → O(log n) average.
+     */
+    public Song searchByTitle(String title) {
+        return titleBST.searchByTitle(title);
+    }
+
+    /**
+     * Autocomplete: returns all songs whose title starts with the given prefix.
+     * Powered by BST prefix traversal.
+     */
+    public List<Song> searchByPrefix(String prefix) {
+        return titleBST.searchByPrefix(prefix);
+    }
+
+    /**
+     * Searches by artist using the linked list → O(n).
+     * A BST keyed on artist is intentionally omitted here to show the contrast,
+     * but could be added identically to SongBST if needed.
+     */
+    public Song searchByArtist(String artist) {
+        return songs.searchByArtist(artist);
+    }
+
+    // ── Sorted view (free from BST in-order traversal) ────────────────────────
+    public List<Song> sortedByTitle() {
+        return titleBST.inOrderSorted();
+    }
+
+    // ── Query helpers ─────────────────────────────────────────────────────────
+    public Song    getSongAt(int index) { return songs.get(index); }
+    public boolean contains(Song song)  { return songs.contains(song); }
+    public int     size()               { return songs.size(); }
+    public boolean isEmpty()            { return songs.isEmpty(); }
+    public String  getName()            { return name; }
+
+    // ── Display: playlist in playback order ──────────────────────────────────
     public void display() {
-        printDivider('═', 100);
-        System.out.printf("  🎵  Playlist: %-40s  Songs: %-3d  Duration: %s%n",
+        printDivider('═', 105);
+        System.out.printf("  🎵  Playlist : %-40s  Songs: %-3d  Duration: %s%n",
                 name, songs.size(), songs.formattedTotalDuration());
-        printDivider('═', 100);
+        printDivider('═', 105);
         if (songs.isEmpty()) {
             System.out.println("  (empty playlist)");
         } else {
             System.out.printf("  %-4s %-35s %-25s %-25s %s%n",
                     "#", "Title", "Artist", "Album", "Duration");
-            printDivider('─', 100);
-            int index = 1;
-            for (Song song : songs) {
-                System.out.printf("  %-4d %s%n", index++, song);
-            }
+            printDivider('─', 105);
+            int idx = 1;
+            for (Song s : songs) System.out.printf("  %-4d %s%n", idx++, s);
         }
-        printDivider('═', 100);
+        printDivider('═', 105);
     }
 
-    public String getName() { return name; }
+    // ── Display: songs sorted alphabetically (BST in-order) ──────────────────
+    public void displaySortedByTitle() {
+        printDivider('═', 105);
+        System.out.printf("  🔤  Sorted Playlist : %-35s  Songs: %-3d%n", name, songs.size());
+        printDivider('═', 105);
+        List<Song> sorted = sortedByTitle();
+        if (sorted.isEmpty()) {
+            System.out.println("  (empty playlist)");
+        } else {
+            System.out.printf("  %-4s %-35s %-25s %-25s %s%n",
+                    "#", "Title", "Artist", "Album", "Duration");
+            printDivider('─', 105);
+            int idx = 1;
+            for (Song s : sorted) System.out.printf("  %-4d %s%n", idx++, s);
+        }
+        printDivider('═', 105);
+    }
+
+    // ── Display: BST tree shape ───────────────────────────────────────────────
+    public void displayBSTShape() {
+        System.out.println();
+        printDivider('─', 60);
+        System.out.println("  BST shape (rotated 90° — right subtree on top):");
+        printDivider('─', 60);
+        titleBST.printTree();
+        printDivider('─', 60);
+    }
 
     private static void printDivider(char ch, int len) {
         System.out.println(String.valueOf(ch).repeat(len));
@@ -322,94 +548,97 @@ class Playlist {
 }
 
 
-// ─────────────────────────────────────────────
-//  Main  – demonstration / driver
-// ─────────────────────────────────────────────
+// ══════════════════════════════════════════════════════════════════════════════
+//  PlaylistManager  –  driver / demonstration
+// ══════════════════════════════════════════════════════════════════════════════
 public class PlaylistManager {
 
     public static void main(String[] args) {
 
-        // ── 1. Create playlist ────────────────
-        Playlist playlist = new Playlist("My Favorite Tracks");
+        Playlist playlist = new Playlist("Classic Rock Essentials");
 
-        // ── 2. Add songs ──────────────────────
-        System.out.println("\n>>> Adding songs to the playlist...\n");
-
-        playlist.addSong(new Song("Bohemian Rhapsody",  "Queen",          "A Night at the Opera",       355));
-        playlist.addSong(new Song("Hotel California",   "Eagles",         "Hotel California",            391));
-        playlist.addSong(new Song("Stairway to Heaven", "Led Zeppelin",   "Led Zeppelin IV",             482));
-        playlist.addSong(new Song("Imagine",            "John Lennon",    "Imagine",                     187));
-        playlist.addSong(new Song("Smells Like Teen Spirit","Nirvana",    "Nevermind",                   301));
-        playlist.addSong(new Song("Purple Haze",        "Jimi Hendrix",   "Are You Experienced",         170));
-
-        // Add at the beginning
-        playlist.addSongFirst(new Song("Come As You Are", "Nirvana",      "Nevermind",                   219));
-
-        // Add at specific index (position 3, 0-based)
-        playlist.addSongAt(3, new Song("Black",         "Pearl Jam",      "Ten",                         335));
+        // ── 1. Add songs ──────────────────────────────────────────────────────
+        System.out.println("\n>>> Adding songs...\n");
+        playlist.addSong(new Song("Bohemian Rhapsody",     "Queen",        "A Night at the Opera", 355));
+        playlist.addSong(new Song("Hotel California",      "Eagles",       "Hotel California",     391));
+        playlist.addSong(new Song("Stairway to Heaven",    "Led Zeppelin", "Led Zeppelin IV",      482));
+        playlist.addSong(new Song("Imagine",               "John Lennon",  "Imagine",              187));
+        playlist.addSong(new Song("Smells Like Teen Spirit","Nirvana",     "Nevermind",            301));
+        playlist.addSong(new Song("Purple Haze",           "Jimi Hendrix", "Are You Experienced",  170));
+        playlist.addSong(new Song("Come As You Are",       "Nirvana",      "Nevermind",            219));
+        playlist.addSong(new Song("Black",                 "Pearl Jam",    "Ten",                  335));
+        playlist.addSong(new Song("Angie",                 "Rolling Stones","Goats Head Soup",     271));
+        playlist.addSong(new Song("Behind Blue Eyes",      "The Who",      "Who's Next",           209));
 
         playlist.display();
 
-        // ── 3. Search ─────────────────────────
-        System.out.println("\n>>> Searching for 'Hotel California'...");
-        Song found = playlist.searchByTitle("Hotel California");
-        System.out.println(found != null
-                ? "  Found: " + found
-                : "  Song not found.");
+        // ── 2. Show BST internal shape ───────────────────────────────────────
+        System.out.println("\n>>> BST internal structure (title index):");
+        playlist.displayBSTShape();
 
-        System.out.println("\n>>> Searching by artist 'Nirvana'...");
+        // ── 3. searchByTitle  →  BST  O(log n) ───────────────────────────────
+        System.out.println("\n>>> [BST] searchByTitle – exact match:");
+        String[] titlesToFind = { "Hotel California", "Imagine", "Yesterday" };
+        for (String t : titlesToFind) {
+            Song result = playlist.searchByTitle(t);
+            System.out.printf("  %-30s → %s%n", "\"" + t + "\"",
+                    result != null ? result.getArtist() + " (" + result.getFormattedDuration() + ")" : "NOT FOUND");
+        }
+
+        // ── 4. searchByPrefix  →  BST prefix walk ────────────────────────────
+        System.out.println("\n>>> [BST] searchByPrefix – autocomplete for \"b\":");
+        List<Song> prefixResults = playlist.searchByPrefix("b");
+        if (prefixResults.isEmpty()) {
+            System.out.println("  No songs found.");
+        } else {
+            prefixResults.forEach(s -> System.out.println("  " + s));
+        }
+
+        System.out.println("\n>>> [BST] searchByPrefix – autocomplete for \"s\":");
+        playlist.searchByPrefix("s").forEach(s -> System.out.println("  " + s));
+
+        // ── 5. searchByArtist  →  Linked list  O(n) ──────────────────────────
+        System.out.println("\n>>> [Linked list] searchByArtist – first match for \"Nirvana\":");
         Song byArtist = playlist.searchByArtist("Nirvana");
-        System.out.println(byArtist != null
-                ? "  First match: " + byArtist
-                : "  No songs by that artist.");
+        System.out.println(byArtist != null ? "  " + byArtist : "  Not found.");
 
-        System.out.println("\n>>> Searching for non-existent song 'Yesterday'...");
-        Song missing = playlist.searchByTitle("Yesterday");
-        System.out.println(missing != null ? "  Found: " + missing : "  Song not found.");
+        // ── 6. Sorted view via BST in-order traversal (free, no extra sort) ──
+        System.out.println("\n>>> [BST in-order] Songs sorted alphabetically by title:\n");
+        playlist.displaySortedByTitle();
 
-        // ── 4. Remove by title ────────────────
-        System.out.println("\n>>> Removing 'Purple Haze' by title...");
-        boolean removed = playlist.removeSongByTitle("Purple Haze");
-        System.out.println(removed ? "  Removed successfully." : "  Song not found.");
+        // ── 7. Remove songs and verify BST sync ───────────────────────────────
+        System.out.println("\n>>> Removing 'Purple Haze' by title (updates list + BST)...");
+        System.out.println(playlist.removeSongByTitle("Purple Haze")
+                ? "  Removed successfully."
+                : "  Not found.");
 
-        // ── 5. Remove by index ────────────────
-        System.out.println("\n>>> Removing song at index 0 (first song)...");
-        Song removedFirst = playlist.removeSongAt(0);
-        System.out.println("  Removed: " + removedFirst.getTitle());
+        System.out.println(">>> Removing first song by index...");
+        System.out.println("  Removed: " + playlist.removeSongAt(0).getTitle());
 
-        // ── 6. Remove last ────────────────────
-        System.out.println("\n>>> Removing the last song...");
-        Song removedLast = playlist.removeLastSong();
-        System.out.println("  Removed: " + removedLast.getTitle());
+        System.out.println("\n>>> Verifying BST search returns null for removed song:");
+        Song deleted = playlist.searchByTitle("Purple Haze");
+        System.out.println("  searchByTitle(\"Purple Haze\") → " + (deleted == null ? "null ✓ (correctly removed from BST)" : deleted));
 
-        // ── 7. Final display ──────────────────
-        System.out.println("\n>>> Final playlist state after removals:\n");
+        System.out.println("\n>>> Playlist after removals:\n");
         playlist.display();
 
-        // ── 8. Edge-case demos ────────────────
-        System.out.println("\n>>> Edge-case: removing a title that does not exist...");
-        boolean notFound = playlist.removeSongByTitle("Nonexistent Song");
-        System.out.println(notFound ? "  Removed." : "  Song not found in playlist.");
+        // ── 8. Edge cases ─────────────────────────────────────────────────────
+        System.out.println("\n>>> Edge cases:");
 
-        System.out.println("\n>>> Edge-case: invalid constructor arguments...");
-        try {
-            new Song("", "Artist", "Album", 180);
-        } catch (IllegalArgumentException e) {
-            System.out.println("  Caught expected error: " + e.getMessage());
-        }
+        System.out.print("  Blank prefix search \"\": ");
+        List<Song> all = playlist.searchByPrefix("");
+        System.out.println(all.size() + " songs returned (all, because every title starts with \"\").");
 
-        try {
-            new Song("Title", "Artist", "Album", -5);
-        } catch (IllegalArgumentException e) {
-            System.out.println("  Caught expected error: " + e.getMessage());
-        }
+        System.out.print("  Non-existent title search: ");
+        System.out.println(playlist.searchByTitle("Yesterday") == null ? "null ✓" : "ERROR");
 
-        System.out.println("\n>>> Edge-case: index out of bounds...");
-        try {
-            playlist.removeSongAt(999);
-        } catch (IndexOutOfBoundsException e) {
-            System.out.println("  Caught expected error: " + e.getMessage());
-        }
+        System.out.println("  Invalid Song (blank title):");
+        try { new Song("", "Artist", "Album", 200); }
+        catch (IllegalArgumentException e) { System.out.println("    Caught: " + e.getMessage()); }
+
+        System.out.println("  Index out of bounds removal:");
+        try { playlist.removeSongAt(999); }
+        catch (IndexOutOfBoundsException e) { System.out.println("    Caught: " + e.getMessage()); }
 
         System.out.println("\nDone.\n");
     }
